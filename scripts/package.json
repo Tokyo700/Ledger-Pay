@@ -1,0 +1,14 @@
+{
+  "name": "ledgerpay-setup-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "create-merchants": "node create-merchants.mjs",
+    "associate-usdc": "node associate-usdc.mjs",
+    "create-topic": "node create-topic.mjs"
+  },
+  "dependencies": {
+    "@hashgraph/sdk": "^2.60.0",
+    "dotenv": "^16.4.5"
+  }
+}
