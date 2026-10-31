@@ -1,0 +1,29 @@
+[
+  {
+    "id": "market-data-cheap",
+    "name": "QuickQuote Market Data",
+    "capability": "market-data",
+    "url": "http://localhost:4021/market-data/cheap",
+    "priceUsdc": "0.01",
+    "merchantAccount": "0.0.11257515",
+    "description": "Current price, 24h change and volume for a crypto asset (e.g. HBAR). Basic data, updated every few minutes."
+  },
+  {
+    "id": "market-data-premium",
+    "name": "DeepBook Market Data Pro",
+    "capability": "market-data",
+    "url": "http://localhost:4021/market-data/premium",
+    "priceUsdc": "0.03",
+    "merchantAccount": "0.0.11257516",
+    "description": "Current price, 24h change, volume, plus order-book depth and a short sentiment note. Real-time."
+  },
+  {
+    "id": "translate-summarize",
+    "name": "Bhasha Summarizer",
+    "capability": "translate-summarize",
+    "url": "http://localhost:4021/translate-summarize",
+    "priceUsdc": "0.02",
+    "merchantAccount": "0.0.11257515",
+    "description": "Summarizes input text and translates it into an Indian language (e.g. Hindi). Send { text, language } as JSON."
+  }
+]
