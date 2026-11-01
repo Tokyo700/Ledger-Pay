@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LedgerPay Dashboard</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d38; --text: #e6edf3; --muted: #8b96a5;
+    --accent: #7c5cff; --ok: #2ea043; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+  h1 { margin: 0; font-size: 22px; }
+  h2 { margin: 0 0 12px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .banner { margin: 12px 0; padding: 8px 12px; border-radius: 8px; background: #3a2f10; color: #f2cc60; font-size: 13px; }
+  .banner.live { background: #10301a; color: #56d364; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .stat .v { font-size: 26px; font-weight: 600; }
+  .stat .l { color: var(--muted); font-size: 12px; }
+  .bar { height: 10px; background: var(--line); border-radius: 99px; overflow: hidden; margin-top: 14px; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .4s; }
+  .bar.hot > div { background: var(--warn); }
+  .approval { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px; border: 1px solid var(--warn); border-radius: 10px; margin-top: 10px; }
+  .approval .why { color: var(--muted); font-size: 13px; }
+  button { border: 0; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; color: #fff; }
+  button.approve { background: var(--ok); } button.reject { background: var(--bad); margin-left: 8px; }
+  button:disabled { opacity: .5; cursor: wait; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  a { color: #a99bff; text-decoration: none; } a:hover { text-decoration: underline; }
+  .empty { color: var(--muted); padding: 8px 0; }
+  code { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LedgerPay</h1>
+    <span class="sub" id="agent"></span>
+  </header>
+  <div class="banner" id="banner"></div>
+
+  <div class="panel">
+    <h2>Task</h2>
+    <div id="task"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Budget</h2>
+    <div class="grid">
+      <div class="stat"><div class="v" id="spent"></div><div class="l">spent</div></div>
+      <div class="stat"><div class="v" id="remaining"></div><div class="l">remaining</div></div>
+      <div class="stat"><div class="v" id="total"></div><div class="l">total budget</div></div>
+      <div class="stat"><div class="v" id="limit"></div><div class="l">per-merchant limit</div></div>
+    </div>
+    <div class="bar" id="bar"><div></div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Waiting for your approval</h2>
+    <div id="approvals"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Payments</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Time</th><th>Service</th><th>Merchant</th><th>USDC</th><th>Why</th><th>Hedera tx</th></tr></thead>
+      <tbody id="payments"></tbody>
+    </table></div>
+    <p class="sub">Audit log on Hedera: <a id="topic" target="_blank" rel="noopener"></a></p>
+  </div>
+</main>
+
+<script>
+// Live mode: open index.html?api=http://localhost:4100  (Aditya Pratap Singh's server).
+// With no ?api= (or if it's unreachable) the page runs on built-in mock data.
+const API = new URLSearchParams(location.search).get("api");
+const POLL_MS = 2000;
+
+const HASHSCAN = "https://hashscan.io/testnet";
+const el = (id) => document.getElementById(id);
+const usd = (n) => "$" + Number(n).toFixed(2);
+const short = (s) => (s.length > 22 ? s.slice(0, 12) + "…" + s.slice(-6) : s);
+
+// ---------- mock data (same shape as DashboardState in packages/shared/types.ts) ----------
+let mock = {
+  agentId: "0.0.11227643",
+  task: "Research today's HBAR market and give me a summary in Hindi.",
+  policy: { totalBudgetUsdc: "0.50", perMerchantLimitUsdc: "0.04", approvalThresholdUsdc: "0.03",
+            allowedMerchants: ["0.0.11257515", "0.0.11257516"] },
+  spentUsdc: "0.01", remainingUsdc: "0.49",
+  pendingApprovals: [{ approvalId: "ap-1", serviceId: "market-data-premium", merchant: "0.0.11257516",
+    amountUsdc: "0.03", reason: "Need order-book depth for a fuller market summary.",
+    createdAt: new Date().toISOString(), status: "pending" }],
+  payments: [{ agentId: "0.0.11227643", serviceId: "market-data-cheap", merchant: "0.0.11257515",
+    amountUsdc: "0.01", txId: "0.0.11227643@1730400000.123456789", reason: "Cheapest provider for basic HBAR price data.",
+    timestamp: new Date().toISOString() }],
+  auditTopicId: "0.0.11257604",
+};
+
+function mockDecide(id, decision) {
+  const ap = mock.pendingApprovals.find((a) => a.approvalId === id);
+  if (!ap) return;
+  mock.pendingApprovals = mock.pendingApprovals.filter((a) => a.approvalId !== id);
+  if (decision === "approved") {
+    mock.payments.unshift({ agentId: mock.agentId, serviceId: ap.serviceId, merchant: ap.merchant,
+      amountUsdc: ap.amountUsdc, txId: "0.0.11227643@1730400100.987654321", reason: ap.reason,
+      timestamp: new Date().toISOString() });
+    const spent = Number(mock.spentUsdc) + Number(ap.amountUsdc);
+    mock.spentUsdc = spent.toFixed(2);
+    mock.remainingUsdc = (Number(mock.policy.totalBudgetUsdc) - spent).toFixed(2);
+  }
+}
+
+// ---------- data ----------
+async function getState() {
+  if (!API) return { state: mock, live: false };
+  try {
+    const r = await fetch(API + "/api/state");
+    if (!r.ok) throw new Error(r.status);
+    return { state: await r.json(), live: true };
+  } catch {
+    return { state: mock, live: false };
+  }
+}
+
+async function decide(id, decision, btn) {
+  btn.parentElement.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  if (API) {
+    try {
+      await fetch(`${API}/api/approvals/${encodeURIComponent(id)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+    } catch { /* next poll shows the truth */ }
+  } else {
+    mockDecide(id, decision);
+  }
+  refresh();
+}
+
+// ---------- rendering (all agent-supplied text goes through textContent) ----------
+function link(href, text) {
+  const a = document.createElement("a");
+  a.href = href; a.target = "_blank"; a.rel = "noopener"; a.textContent = text;
+  return a;
+}
+function td(content) {
+  const c = document.createElement("td");
+  c.append(content);
+  return c;
+}
+
+function render({ state: s, live }) {
+  const b = el("banner");
+  b.className = "banner" + (live ? " live" : "");
+  b.textContent = live ? `Live: connected to ${API}` : "Mock data: add ?api=http://localhost:4100 to connect to the real agent";
+
+  el("agent").textContent = "Agent " + s.agentId;
+  el("task").textContent = s.task || "No task running";
+  el("spent").textContent = usd(s.spentUsdc);
+  el("remaining").textContent = usd(s.remainingUsdc);
+  el("total").textContent = usd(s.policy.totalBudgetUsdc);
+  el("limit").textContent = usd(s.policy.perMerchantLimitUsdc);
+
+  const pct = Math.min(100, (Number(s.spentUsdc) / Number(s.policy.totalBudgetUsdc)) * 100 || 0);
+  el("bar").firstElementChild.style.width = pct + "%";
+  el("bar").classList.toggle("hot", pct > 80);
+
+  const ap = el("approvals");
+  ap.replaceChildren();
+  const pending = s.pendingApprovals.filter((a) => a.status === "pending");
+  if (!pending.length) {
+    const e = document.createElement("div"); e.className = "empty"; e.textContent = "Nothing waiting."; ap.append(e);
+  }
+  for (const a of pending) {
+    const row = document.createElement("div"); row.className = "approval";
+    const info = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = `${a.serviceId}: ${usd(a.amountUsdc)} to ${a.merchant}`;
+    const why = document.createElement("div"); why.className = "why"; why.textContent = a.reason;
+    info.append(title, why);
+    const actions = document.createElement("div");
+    const yes = document.createElement("button"); yes.className = "approve"; yes.textContent = "Approve";
+    const no = document.createElement("button"); no.className = "reject"; no.textContent = "Reject";
+    yes.onclick = () => decide(a.approvalId, "approved", yes);
+    no.onclick = () => decide(a.approvalId, "rejected", no);
+    actions.append(yes, no);
+    row.append(info, actions);
+    ap.append(row);
+  }
+
+  const tb = el("payments");
+  tb.replaceChildren();
+  if (!s.payments.length) {
+    const tr = document.createElement("tr"); const c = td("No payments yet."); c.colSpan = 6; c.className = "empty";
+    tr.append(c); tb.append(tr);
+  }
+  for (const p of s.payments) {
+    const tr = document.createElement("tr");
+    tr.append(
+      td(new Date(p.timestamp).toLocaleTimeString()),
+      td(p.serviceId),
+      td(link(`${HASHSCAN}/account/${p.merchant}`, p.merchant)),
+      td(usd(p.amountUsdc)),
+      td(p.reason),
+      td(link(`${HASHSCAN}/transaction/${p.txId}`, short(p.txId))),
+    );
+    tb.append(tr);
+  }
+
+  const t = el("topic");
+  t.href = `${HASHSCAN}/topic/${s.auditTopicId}`;
+  t.textContent = "topic " + s.auditTopicId;
+}
+
+// Redraw only when something changed, so buttons aren't replaced mid-click.
+let lastSeen = "";
+async function refresh() {
+  const result = await getState();
+  const seen = JSON.stringify(result);
+  if (seen === lastSeen) return;
+  lastSeen = seen;
+  render(result);
+}
+refresh();
+setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>
